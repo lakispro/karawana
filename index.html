@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Karawana — ofensywa Huti w Jemenie 2026</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+  :root { --bg:#0f1115; --panel:#161a21; --line:#2a303b; --txt:#e5e7eb; --mut:#9ca3af; }
+  * { box-sizing:border-box }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--txt); font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif }
+  #map { position:absolute; inset:0 0 0 380px }
+  #panel { position:absolute; top:0; left:0; bottom:0; width:380px; background:var(--panel); border-right:1px solid var(--line); display:flex; flex-direction:column; z-index:1000 }
+  header { padding:12px 14px 8px; border-bottom:1px solid var(--line) }
+  h1 { font-size:17px; margin:0 0 2px }
+  .sub { color:var(--mut); font-size:12px }
+  .ctrl { padding:8px 14px; border-bottom:1px solid var(--line) }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap }
+  input[type=range] { width:100%; accent-color:#ef4444 }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size:12px; cursor:pointer; user-select:none; display:inline-flex; gap:5px; align-items:center }
+  .chip.off { opacity:.35 }
+  .dot { width:9px; height:9px; border-radius:50% }
+  button { background:#232934; color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:3px 8px; font-size:12px; cursor:pointer }
+  #list { overflow-y:auto; flex:1; padding:4px 0 }
+  .ev { display:flex; gap:8px; padding:8px 14px; border-left:3px solid transparent; cursor:pointer }
+  .ev:hover { background:#1c212a }
+  .ev.sel { background:#1f2530; border-left-color:var(--c) }
+  .ev.future { opacity:.3 }
+  .ev input { margin-top:3px; accent-color:var(--c) }
+  .ev .d { color:var(--mut); font-size:11px; font-variant-numeric:tabular-nums }
+  .ev .t { font-weight:600 }
+  .ev .x { display:none; color:#cbd5e1; font-size:13px; margin-top:4px }
+  .ev.sel .x { display:block }
+  .ev .x a { color:#93c5fd; display:block; font-size:12px }
+  footer { padding:6px 14px; font-size:11px; color:var(--mut); border-top:1px solid var(--line) }
+  .lbl { background:rgba(15,17,21,.82); color:#f3f4f6; border:none; box-shadow:none; font-size:11px; padding:1px 5px; border-radius:3px }
+  .lbl::before { display:none }
+  .arrowhead { font-size:16px; line-height:16px; text-align:center; text-shadow:0 0 3px #000 }
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip { background:var(--panel); color:var(--txt) }
+  .leaflet-popup-content a { color:#93c5fd }
+  #toggle { display:none }
+  summary { cursor:pointer; color:var(--mut); font-size:12px; margin:4px 0 }
+  @media (max-width:800px) {
+    #map { inset:0 0 42vh 0 }
+    #panel { top:auto; width:100%; height:42vh; border-right:0; border-top:1px solid var(--line); transition:height .2s }
+    #panel.big { height:80vh }
+    #map.big { bottom:80vh }
+    #toggle { display:inline-block; float:right }
+    header { padding:8px 12px 6px } h1 { font-size:15px }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <header>
+    <button id="toggle">↕</button>
+    <h1>Ofensywa Huti w Jemenie — 2026</h1>
+    <div class="sub">Każdy news = osobna warstwa. Dane do 5.10.2026. Strefy i lokalizacje schematyczne/przybliżone.</div>
+  </header>
+  <div class="ctrl">
+    <div class="row" style="justify-content:space-between"><span>Stan na: <b id="dateLbl"></b></span>
+      <span><button id="play">▶</button> <button id="all">wszystkie</button> <button id="none">żadne</button></span></div>
+    <input type="range" id="slider">
+    <details id="filt" open><summary>Filtry i strefy</summary>
+    <div class="row" id="cats"></div>
+    <div class="row" style="margin-top:6px" id="zones"></div></details>
+  </div>
+  <div id="list"></div>
+  <footer>Źródła przy każdym wpisie. Twierdzenia stron (PLC, Huti) bywają niepotwierdzone. Podkład: Esri / OpenStreetMap.</footer>
+</div>
+<script src="vendor/leaflet.js"></script>
+<script src="data.js"></script>
+<script>
+const map = L.map('map', { zoomControl: true, worldCopyJump: true }).setView([16.5, 44], 6);
+const esri = (n, o = {}) => L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/${n}/MapServer/tile/{z}/{y}/{x}`, { attribution: 'Tiles © Esri', maxZoom: 16, ...o });
+const dark = L.layerGroup([esri('Canvas/World_Dark_Gray_Base'), esri('Canvas/World_Dark_Gray_Reference', { pane: 'shadowPane' })]).addTo(map);
+const sat = L.layerGroup([esri('World_Imagery', { maxZoom: 18 }), esri('Reference/World_Boundaries_and_Places', { pane: 'shadowPane' })]);
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 });
+L.control.layers({ 'Ciemna': dark, 'Satelita': sat, 'OSM': osm }, null, { position: 'topright' }).addTo(map);
+
+const fmt = d => { const [y,m,dd] = d.split('-'); return `${+dd}.${m}.${y}`; };
+const day = d => Math.round(Date.parse(d) / 864e5);
+const dates = EVENTS.map(e => day(e.date));
+const minD = Math.min(...dates), maxD = Math.max(...dates);
+const slider = document.getElementById('slider');
+slider.min = minD; slider.max = maxD; slider.value = maxD;
+
+function curve(a, b) {
+  const [la1, lo1] = a, [la2, lo2] = b, ml = (la1 + la2) / 2, mo = (lo1 + lo2) / 2;
+  const dx = lo2 - lo1, dy = la2 - la1, k = 0.18;
+  const c = [ml + dx * k, mo - dy * k], pts = [];
+  for (let t = 0; t <= 1.0001; t += 0.05)
+    pts.push([(1-t)*(1-t)*la1 + 2*(1-t)*t*c[0] + t*t*la2, (1-t)*(1-t)*lo1 + 2*(1-t)*t*c[1] + t*t*lo2]);
+  return pts;
+}
+function head(pts, color) {
+  const a = map.latLngToLayerPoint(pts[pts.length - 2]), b = map.latLngToLayerPoint(pts[pts.length - 1]);
+  const ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + 90;
+  return L.marker(pts[pts.length - 1], { interactive: false, icon: L.divIcon({ className: '', iconSize: [16,16], iconAnchor: [8,8],
+    html: `<div class="arrowhead" style="color:${color};transform:rotate(${ang}deg)">▲</div>` }) });
+}
+
+// Strefy
+const zoneLayers = {};
+const zonesEl = document.getElementById('zones');
+ZONES.forEach(z => {
+  zoneLayers[z.id] = L.polygon(z.pts, { color: z.color, weight: 1, fillOpacity: .16, dashArray: '4 4' }).bindTooltip(z.name, { sticky: true });
+  const c = document.createElement('span'); c.className = 'chip'; c.innerHTML = `<span class="dot" style="background:${z.color}"></span>${z.name}`;
+  c.onclick = () => { z.off = !z.off; c.classList.toggle('off', !!z.off); refresh(); };
+  zonesEl.appendChild(c); z.chip = c;
+});
+
+// Warstwy zdarzeń
+const arrowGroups = [];
+EVENTS.forEach(e => {
+  const col = CATS[e.cat].color, g = L.featureGroup();
+  e.geom.forEach(o => {
+    if (o.m) {
+      L.circleMarker([o.m[0], o.m[1]], { radius: 7, color: '#000', weight: 1, fillColor: col, fillOpacity: .95 })
+        .bindTooltip(o.m[2], { permanent: false, direction: 'top', className: 'lbl' }).addTo(g);
+    } else if (o.arc) {
+      const pts = curve(o.arc[0], o.arc[1]);
+      L.polyline(pts, { color: col, weight: 2, dashArray: '6 6', opacity: .9 }).addTo(g);
+      arrowGroups.push({ g, pts, col });
+    } else if (o.arrow) {
+      L.polyline(o.arrow, { color: '#000', weight: 8, opacity: .5 }).addTo(g);
+      L.polyline(o.arrow, { color: col, weight: 5, opacity: .95 }).addTo(g);
+      arrowGroups.push({ g, pts: o.arrow, col });
+    } else if (o.poly) {
+      L.polygon(o.poly, { color: col, weight: 1, fillOpacity: .12 }).bindTooltip(o.label, { sticky: true }).addTo(g);
+    } else if (o.line) {
+      L.polyline(o.line, { color: '#e5e7eb', weight: 2, dashArray: '2 5' }).bindTooltip(o.label, { sticky: true }).addTo(g);
+    }
+  });
+  g.on('click', () => select(e, false));
+  e.layer = g; e.on = true;
+});
+const heads = L.layerGroup().addTo(map);
+function drawHeads() {
+  heads.clearLayers();
+  arrowGroups.forEach(a => { if (map.hasLayer(a.g)) head(a.pts, a.col).addTo(heads); });
+}
+map.on('zoomend', drawHeads);
+
+// Kategorie
+const catsEl = document.getElementById('cats');
+Object.entries(CATS).forEach(([k, c]) => {
+  const el = document.createElement('span'); el.className = 'chip';
+  el.innerHTML = `<span class="dot" style="background:${c.color}"></span>${c.name}`;
+  el.onclick = () => { c.off = !c.off; el.classList.toggle('off', !!c.off); refresh(); };
+  catsEl.appendChild(el);
+});
+
+// Lista
+const list = document.getElementById('list');
+[...EVENTS].sort((a, b) => b.date.localeCompare(a.date)).forEach(e => {
+  const el = document.createElement('div'); el.className = 'ev'; el.style.setProperty('--c', CATS[e.cat].color);
+  el.innerHTML = `<input type="checkbox" checked><div><div class="d">${fmt(e.date)} · <span style="color:${CATS[e.cat].color}">${CATS[e.cat].name}</span></div>
+    <div class="t">${e.title}</div><div class="x">${e.text}${e.src.map(s => `<a href="${s[1]}" target="_blank" rel="noopener">↗ ${s[0]}</a>`).join('')}</div></div>`;
+  const cb = el.querySelector('input');
+  cb.onclick = ev => { ev.stopPropagation(); e.on = cb.checked; refresh(); };
+  el.onclick = ev => { if (ev.target.tagName !== 'A') select(e, true); };
+  e.el = el; e.cb = cb; list.appendChild(el);
+});
+
+let selected = null;
+function select(e, fly) {
+  if (selected) selected.el.classList.remove('sel');
+  if (selected === e && fly) { selected = null; return; }
+  selected = e; e.el.classList.add('sel');
+  if (!e.on) { e.on = true; e.cb.checked = true; }
+  if (day(e.date) > +slider.value) slider.value = day(e.date);
+  refresh();
+  if (fly) map.flyToBounds(e.layer.getBounds().pad(.35), { maxZoom: 9, duration: .8 });
+  else e.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function refresh() {
+  const cur = +slider.value;
+  document.getElementById('dateLbl').textContent = fmt(new Date(cur * 864e5).toISOString().slice(0, 10));
+  EVENTS.forEach(e => {
+    const future = day(e.date) > cur;
+    e.el.classList.toggle('future', future);
+    e.el.style.display = CATS[e.cat].off ? 'none' : '';
+    const show = e.on && !future && !CATS[e.cat].off;
+    if (show && !map.hasLayer(e.layer)) e.layer.addTo(map);
+    if (!show && map.hasLayer(e.layer)) map.removeLayer(e.layer);
+  });
+  ZONES.forEach(z => {
+    const show = !z.off && day(z.date) <= cur, l = zoneLayers[z.id];
+    if (show && !map.hasLayer(l)) { l.addTo(map); l.bringToBack(); }
+    if (!show && map.hasLayer(l)) map.removeLayer(l);
+  });
+  drawHeads();
+}
+slider.oninput = refresh;
+document.getElementById('all').onclick = () => { EVENTS.forEach(e => { e.on = true; e.cb.checked = true; }); refresh(); };
+document.getElementById('none').onclick = () => { EVENTS.forEach(e => { e.on = false; e.cb.checked = false; }); refresh(); };
+let timer = null;
+document.getElementById('play').onclick = ev => {
+  if (timer) { clearInterval(timer); timer = null; ev.target.textContent = '▶'; return; }
+  ev.target.textContent = '❚❚';
+  slider.value = minD;
+  const steps = [...new Set(dates)].sort((a, b) => a - b); let i = 0;
+  timer = setInterval(() => {
+    slider.value = steps[i]; refresh();
+    const e = EVENTS.find(x => day(x.date) === steps[i]); if (e) { if (selected) selected.el.classList.remove('sel'); selected = e; e.el.classList.add('sel'); e.el.scrollIntoView({ block: 'nearest' }); }
+    if (++i >= steps.length) { clearInterval(timer); timer = null; ev.target.textContent = '▶'; }
+  }, 1600);
+};
+document.getElementById('toggle').onclick = () => { document.getElementById('panel').classList.toggle('big'); document.getElementById('map').classList.toggle('big'); setTimeout(() => map.invalidateSize(), 250); };
+if (innerWidth <= 800) document.getElementById('filt').open = false;
+map.fitBounds([[12, 37], [26, 52]]);
+refresh();
+</script>
+</body>
+</html>
